@@ -4,14 +4,22 @@ import java.io.*;
 import java.util.*;
 import java.util.Map.Entry;
 
+import weka.attributeSelection.InfoGainAttributeEval;
+import weka.attributeSelection.Ranker;
 import weka.clusterers.*;
 import weka.clusterers.forOPTICSAndDBScan.DataObjects.DataObject;
 import weka.clusterers.forOPTICSAndDBScan.Databases.Database;
 import weka.core.Attribute;
+import weka.core.DenseInstance;
+import weka.core.FastVector;
 import weka.core.Instance;
 import weka.core.Instances;
+import weka.core.ManhattanDistance;
 import weka.core.converters.*;
 import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.NumericToNominal;
+import weka.filters.unsupervised.attribute.PrincipalComponents;
 import weka.filters.unsupervised.attribute.Remove;
 
 /**	
@@ -30,7 +38,6 @@ public class GenerateClusters {
 	private String filePath;  
 	private int clusterType;  
 	private Instances ins;
-	private FilteredClusterer fc;
 	private List<Set> keyAttributes;
 	private List<List> clusterID;
 	private ClusterEvaluation eval;
@@ -117,8 +124,7 @@ public class GenerateClusters {
 	
 	/**	
 	 * 根据ClusterType选择聚类算法，进行聚类
-	 * @param FilteredClusterer fc;
-	 * 		  StringBuffer result;
+	 * @param StringBuffer result;
 	 * 		  Instances ins;
 	 * <method> setFilters();
 	 * 		   buildXMeansCluster(filteredInstances);
@@ -130,27 +136,18 @@ public class GenerateClusters {
 	private boolean buildClusterByType(){
 		
 		clusterResults=new StringBuffer();
-		fc = new FilteredClusterer();
-		Instances newData=setFilters();			                                   
+		Instances newData=setFilters();	//instances after remove ID 		                                   
 		
 		if(clusterType==1){
-			if(buildXMeansCluster(newData))
-				return true;
-			else return false;			
+			return buildXMeansCluster(newData)?true:false;			
 		}else if(clusterType==2){
-			if(buildCanopyCluster(newData))
-				return true;
-			else return false;
+			return buildCanopyCluster(newData)?true:false;
 		}else if(clusterType==3){
-			if(buildEMCluster(newData))
-				return true;
-			else return false;
+			return buildEMCluster(newData)?true:false;
 		}else if(clusterType==4){
 			Cobweb coCluster=new Cobweb();
 			try{
-				fc.setClusterer(coCluster);
-				fc.buildClusterer(ins);
-				coCluster=(Cobweb) fc.getClusterer();
+				coCluster.buildClusterer(newData);
 				clusterResults.append(coCluster.globalInfo()+"\n");
 				clusterResults.append(coCluster.toString());
 				return true;
@@ -163,12 +160,9 @@ public class GenerateClusters {
 			DBSCAN dbCluster=new DBSCAN();
 			dbCluster.setEpsilon(0.5);
 			try {
-				fc.setClusterer(dbCluster);
-				fc.buildClusterer(ins);
-				dbCluster=(DBSCAN) fc.getClusterer();				
+				dbCluster.buildClusterer(newData);				
 				clusterResults.append(dbCluster.globalInfo());
-				clusterResults.append(dbCluster.toString());
-				
+				clusterResults.append(dbCluster.toString());				
 				return true;
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
@@ -190,7 +184,7 @@ public class GenerateClusters {
 	private boolean evaluateCluster(){
 		//评价聚类结果
 		eval=new ClusterEvaluation();
-		eval.setClusterer(fc);
+		//eval.setClusterer(fc);
 		try {
 			eval.evaluateClusterer(ins);
 			//clusterResults.append(eval.clusterResultsToString());
@@ -220,29 +214,88 @@ public class GenerateClusters {
 	}
 	
 	/**	
-	 * Handle the original instances(with instance ID) 
+	 * 1.Handle the original instances(with instance ID) 
 	 * to new one(remove ID)
+	 * 2.Normalize the instances
+	 * 3.Info+Ranker+PCA(failed)
 	 * @return new instances(without instance ID)
 	 */	
-	private Instances setFilters(){
-		
-		/** set filter options */
-		String[] options = new String[2];
-		options[0] = "-R";                                    
-		options[1] = "1";  //the index of specific attribute
+	private Instances setFilters(){	
 		                        
 		try {
+			
+			/** remove instance ID */
+			String[] options = new String[2];
+			options[0] = "-R";                                    
+			options[1] = "1";  //the index of specific attribute
 			Remove remove = new Remove(); 
 			remove.setOptions(options);
 			remove.setInputFormat(ins);
 			Instances newData=Filter.useFilter(ins, remove);
-			fc.setFilter(remove);
-			return newData;			
+			
+			/**	
+			 * trying to normalize instances
+			 * <p>Date: 2015/7/30</p>
+			 */			
+			Normalize norm=new Normalize();
+			norm.setInputFormat(newData);
+			newData=Filter.useFilter(newData, norm);
+			
+			/**	
+			 * trying to reduce attributes vectors with Info+Ranker algorithm
+			 * 
+			 * <p>Date: 2015/7/30</p>
+			 */
+			
+			/**InfoGain must handle nominal class attribute*/
+			newData.setClassIndex(newData.numAttributes()-1);
+			NumericToNominal convert=new NumericToNominal();
+			String[] convertOptions = new String[2];
+			convertOptions[0] = "-R";                                    
+			convertOptions[1] =Integer.toString(newData.numAttributes()) ;  //the last index of specific attribute
+			convert.setOptions(convertOptions);
+			convert.setInputFormat(newData);
+			newData=Filter.useFilter(newData, convert);
+			
+			/**abstract ranked attributes to reduce instances*/
+			Ranker rank=new Ranker();
+			InfoGainAttributeEval ig=new InfoGainAttributeEval();
+			ig.setBinarizeNumericAttributes(true);
+			ig.buildEvaluator(newData);
+			
+			/**generate reduced instances*/
+			int[] topAttributes=rank.search(ig, newData);
+			int numInstance=newData.size();
+			int numAttribute=topAttributes.length<=100?topAttributes.length:100;//choose less than 100 attributes
+			double[][] reducedValues=new double[numInstance][numAttribute];
+			FastVector reducedAttr=new FastVector();
+			for(int i=0;i<numAttribute;i++){
+				reducedAttr.addElement(newData.attribute(topAttributes[i]));
+			}
+			Instances reducedIns=new Instances("keyContent",reducedAttr,0);
+			for(int m=0;m<numInstance;m++){
+				for(int n=0;n<numAttribute;n++){
+					reducedValues[m][n]=newData.get(m).value(topAttributes[n]);
+				}
+				reducedIns.add(new DenseInstance(1.0,reducedValues[m]));
+			}
+//			ArffSaver save=new ArffSaver();
+//			save.setInstances(reducedIns);
+//			save.setFile(new File("keyContent.arff"));
+//			save.writeBatch();
+////			
+//			PrincipalComponents  pca =new PrincipalComponents();
+//			pca.setCenterData(false);
+//			pca.setInputFormat(reducedIns);
+//			Instances newData_PCA=Filter.useFilter(reducedIns, pca);
+			return reducedIns;			
 		} catch (Exception e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 			return null;
 		} 	
+		
+		
 		
 	}
 	
@@ -250,7 +303,7 @@ public class GenerateClusters {
 	 * Build Clusters with XMeans algorithm
 	 * @param newData: instances without ID
 	 * <related>
-	 * 	<param>	fc---FilteredCluster
+	 * 	<param>	fc---FilteredCluster //remove FilteredCluster build with Clusterer 2015/7/30
 	 * 			ins---original instances(with ID)
 	 * 	</param>
 	 * 	<method>getKeyAttributes(clusterCenterInstances)
@@ -267,13 +320,15 @@ public class GenerateClusters {
 			/** Initialize XMeans Clusterer and Set Parameters */
 			XMeans xCluster=new XMeans();
 			xCluster.setMaxNumClusters(100);
-			xCluster.setSeed(100);
+			xCluster.setMinNumClusters(5);
+			xCluster.setSeed(250);
 			
-			/** Build XMeans Clusterer with FilterCluster */
-			fc.setClusterer(xCluster);
-			fc.buildClusterer(ins);     //NOTE:build with original instances
-			xCluster=(XMeans) fc.getClusterer();
-			clusterResults.append(xCluster.globalInfo()+"\n");
+			/** Build XMeans Clusterer with filtered instances*/
+//			fc.setClusterer(xCluster);	
+//			fc.buildClusterer(ins);     //NOTE:build with original instances
+//			xCluster=(XMeans) fc.getClusterer();
+			xCluster.buildClusterer(newData);
+			clusterResults.append(xCluster.globalInfo()+"\n\n");
 			
 			/** Abstract KeyWords Vectors of clusterCenters */
 			Instances xmeansAssignments=xCluster.getClusterCenters();
@@ -299,8 +354,7 @@ public class GenerateClusters {
 	 * Build Clusters with Canopy algorithm
 	 * @param newData: instances without ID
 	 * <related>
-	 * 	<param>	fc---FilteredCluster
-	 * 			ins---original instances(with ID)
+	 * 	<param>	ins---original instances(with ID)
 	 * 	</param>
 	 * 	<method>getKeyAttributes(clusterCenterInstances)
 	 * 			getInfo(Clusterer,newInstances)
@@ -315,15 +369,15 @@ public class GenerateClusters {
 			
 			/** Initialize Canopy Clusterer and Set Parameters */
 			Canopy canCluster=new Canopy();
-			canCluster.setSeed(10);
-			canCluster.setT2(0.001);
-			//canCluster.setNumClusters(5);
+			canCluster.setSeed(200);
+			canCluster.setT2(0.00001);
 			
-			/** Build Canopy Clusterer with FilterCluster */
-			fc.setClusterer(canCluster);
-			fc.buildClusterer(ins);
-			canCluster=(Canopy) fc.getClusterer();
-			clusterResults.append(canCluster.globalInfo()+"\n");
+			/** Build Canopy Clusterer with Filtered Instances */
+//			fc.setClusterer(canCluster);
+//			fc.buildClusterer(ins);
+//			canCluster=(Canopy) fc.getClusterer();
+			canCluster.buildClusterer(newData);
+			clusterResults.append(canCluster.globalInfo()+"\n\n");
 			
 			/** Abstract KeyWords Vectors of clusterCenters */
 			Instances canopyAssignments=canCluster.getCanopies();
@@ -348,8 +402,7 @@ public class GenerateClusters {
 	 * Build Clusters with EM algorithm
 	 * @param newData: instances without ID
 	 * <related>
-	 * 	<param>	fc---FilteredCluster
-	 * 			ins---original instances(with ID)
+	 * 	<param>	ins---original instances(with ID)
 	 * 	</param>
 	 * 	<method>getKeyAttributes(clusterCenterInstances)
 	 * 			getInfo(Clusterer,newInstances)
@@ -367,10 +420,11 @@ public class GenerateClusters {
 			emCluster.setMaxIterations(10);
 			emCluster.setNumKMeansRuns(10);
 			
-			/** Build EM Clusterer with FilterCluster */
-			fc.setClusterer(emCluster);
-			fc.buildClusterer(ins);
-			emCluster=(EM) fc.getClusterer();
+			/** Build EM Clusterer with Filtered Instances */
+//			fc.setClusterer(emCluster);
+//			fc.buildClusterer(ins);
+//			emCluster=(EM) fc.getClusterer();
+			emCluster.buildClusterer(newData);
 			clusterResults.append(emCluster.globalInfo()+"\n");
 			
 			/** Abstract KeyWords Vectors of clusterCenters */
@@ -410,7 +464,7 @@ public class GenerateClusters {
 	/**	
 	 * Get corresponding keyWords of each clusterCenter
 	 * @param dataNodes clusterCenterInstances
-	 * @return a list of keyWord sets sorted by their TDIDF values 
+	 * @return a list of keyWord sets sorted by their TFIDF values 
 	 */	
 	private void generateKeyAttributes(Instances dataNodes){
 		
@@ -419,7 +473,7 @@ public class GenerateClusters {
 			Map<String,Double> m=new HashMap<String,Double>();
 			Instance data=dataNodes.instance(i);			
 			for(int j=0;j<data.numAttributes();j++){
-				if(data.value(j)>=1){
+				if(data.value(j)>=0.01){
 					m.put(data.attribute(j).name(),data.value(j));
 				}							
 			}
@@ -448,7 +502,7 @@ public class GenerateClusters {
 			int count=0;	//count the number of each cluster
 			
 			for(int j=0;j<newData.size();j++){
-				int	clusterNum = c.clusterInstance(newData.get(j));
+				int	clusterNum = c.clusterInstance(newData.get(j)); //NOTE:instance must be filtered data
 					if(clusterNum==i){
 						temp.add((long)ins.instance(j).value(0));	
 						count++;
@@ -506,10 +560,10 @@ public class GenerateClusters {
             }
         });
         
-        //int i=0;
-        //int len=20;//选取前二十个记录
+        int i=0;
+        int len=30;//选取前二十个记录
         Map result = new LinkedHashMap<String,Double>();
-        for (Iterator it = list.iterator(); it.hasNext();) {
+        for (Iterator it = list.iterator(); it.hasNext()&&i<len;i++) {
             Map.Entry entry = (Map.Entry) it.next();
             result.put(entry.getKey(), entry.getValue());
         }
@@ -539,7 +593,7 @@ public class GenerateClusters {
 	}
 	
 	/**	
-	 * Interface of cluster algorithm
+	 * Interface of cluster algorithm Type
 	 * @param clusterType
 	 */
 	

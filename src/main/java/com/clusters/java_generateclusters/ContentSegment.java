@@ -89,7 +89,7 @@ public class ContentSegment {
 			}else{
 				for(String s:stems.keySet() ){
 					//Matcher m=p.matcher(s);
-					if(!wordVectors.contains(s) && stems.get(s)>=2){
+					if(!wordVectors.contains(s)){
 						wordVectors.add(s);
 					}
 				}
@@ -220,22 +220,22 @@ public class ContentSegment {
 		for(Iterator<Long> it_id=key.iterator();it_id.hasNext();k++){
 			ins.instance(k).setValue(0,it_id.next());			
 		}
-		
+		//ins.setClassIndex(ins.numAttributes()-1);
 		
 		//return ins;
 		
 		//保存arff文件
-//		ArffSaver save=new ArffSaver();
-//		save.setInstances(ins);
-//		try {
-//			save.setFile(new File("news-content.arff"));
-//			save.writeBatch();
-//			return true;
-//		} catch (IOException e) {
-//			// TODO Auto-generated catch block
-//			e.printStackTrace();
-//			return false;
-//		}
+		ArffSaver save=new ArffSaver();
+		save.setInstances(ins);
+		try {
+			save.setFile(new File("news-content.arff"));
+			save.writeBatch();
+			
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			
+		}
 		
 		
 	}
