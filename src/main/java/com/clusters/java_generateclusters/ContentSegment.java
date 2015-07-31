@@ -25,12 +25,7 @@ import org.ansj.domain.Term;
 
 public class ContentSegment {
 
-	
-	private FastVector attr;
-	private Instances ins;
-	private List<Term> unFilterWords;
-	private Map<String,Double> stems;
-	
+	private Instances ins;	
 	private Map<Long,NewsContent> newsContent;
 	
 	public ContentSegment(){
@@ -42,48 +37,42 @@ public class ContentSegment {
 		
 	}
 	
-	/**	
-	 * 从文件中读入新闻内容
-	 * @param path：新闻内容的存储路径
-	
-	public void readData(String path){
-		
-		content=new ArrayList<String>();
-		try { 
-            BufferedReader reader = new BufferedReader(new FileReader(path));//换成你的文件名
-            reader.readLine();
-            String line = null; 
-            while((line=reader.readLine())!=null){ 
-                String item[] = line.split(",");                 
-                String last = item[item.length-1];  
-                content.add(last);                
-            }
-            System.out.println(content.size()); 
-        } catch (Exception e) { 
-            e.printStackTrace(); 
-        } 
-	}
-	 */
 	
 	/**	
+	 * <p>
 	 * Main Function of segment content
+	 * 1.Get the keyWords and TFIDF as a map of each contentWord
+	 * 2.Get the whole keyWords Vectors of all the contentWord
+	 * </p>
+	 * <related>
+	 * 	<param>	
+	 * 		Map	contentWord:Key->contentID,value->Map<keyWords,TFIDF> stems
+	 * 		List wordVectors
+	 * 	</param>
+	 * 	<method>
+	 * 		getKeyWords(content,title,num)
+	 * 	</method>
+	 * </related>
 	 * 
+	 * @return Instances:Attributes->wordVectors,Instance->TFIDF
 	 * 
 	 */
-	public Instances contentSeg(){
+	public Instances contentSeg(){		
 		
-		
+		/** Initialize*/
 		Map<Long,Map> contentWord=new HashMap<Long,Map>();
 		List<String> wordVectors=new ArrayList<String>();
 		
-		//Pattern p=Pattern.compile("[0-9]+[^\\x00-\\xff]+");	//去除年、月
 		for(Entry<Long, NewsContent> entry:newsContent.entrySet()){
-			Long key=entry.getKey();
-			NewsContent temp=entry.getValue();
 			
-			getKeyWords(temp.getContent(),temp.getTitle(),10);			
+			/**Get KeyWords of each content*/
+			Long key=entry.getKey();
+			NewsContent temp=entry.getValue();	
+			Map<String,Double> stems=new HashMap<String, Double>();
+			stems=getKeyWords(temp.getContent(),temp.getTitle(),10);			
 			contentWord.put(key,stems);
 			
+			/**Generate wordVectors*/
 			if(wordVectors.isEmpty()){
 				wordVectors.addAll(stems.keySet());
 			}else{
@@ -93,107 +82,69 @@ public class ContentSegment {
 						wordVectors.add(s);
 					}
 				}
-			}						
+			}	
+			//stems.clear();
+			
 		}
-
-				
+		
+		/**Save wordVectors and contentWord*/
 		createArff(contentWord,wordVectors);
+		
+		/**Clear List*/
 		contentWord.clear();
 		wordVectors.clear();
-		stems.clear();	
+			
 		return ins;
 	}
 	
 	
 	/**	
+	 * Generate Key Words of one article mainly with its content and title
+	 * @param	text:content of the article
+	 * 			title:title of the article
+	 * 			numKeys: the number of keys to generate
+	 * <related>
+	 * 	<method>
+	 * 		KeyWordComputer.computeArticleTfidf(text,title)
+	 * 	</method>
+	 * </related>
+	 * @return	Map<String,Double>:key->Key Word,value->TFIDF
 	 * 
 	 */
-	public void getKeyWords(String text,String title,int numKeys){
+	public Map<String,Double> getKeyWords(String text,String title,int numKeys){
 		
-		stems = new HashMap<String, Double>();
-		//keyWords=new ArrayList<KeyWord>();
+		Map<String,Double> stems = new HashMap<String, Double>();
 		KeyWordComputer key=new KeyWordComputer(numKeys);  
         Iterator it = key.computeArticleTfidf(text,title).iterator() ;  
         while(it.hasNext()) {  
-            KeyWord key2=(KeyWord)it.next(); 
-            //keyWords.add(key2);
-            stems.put(key2.toString(), key2.getScore());
-           // System.out.println(key2.toString()+key2.getScore());      
-        }    
+            KeyWord key2=(KeyWord)it.next();             
+            stems.put(key2.toString(), key2.getScore());               
+        }  
+        
+        return stems;
 	}
 	
 	/**	
-	 * 对分词后的词组进行去词停用和词频统计
-	 * @deprecated useless
-	 * @return true for filter succeed, false for filter fail
-	 */
-	private boolean filterWords(){
-		
-		String stopWordPath="StopWords.txt";		
-		List<String> stopWordList=new ArrayList<String>();
-		String stopWords=new String();
-		stems = new HashMap<String, Double>();
-		
-		double count;
-		
-		try {
-			//读入停用词
-			BufferedReader stopWordReader=new BufferedReader(new FileReader(stopWordPath));			
-			while((stopWords=stopWordReader.readLine()) != null){
-				stopWordList.add(stopWords);				
-			}
-			stopWordReader.close();
-			
-			//int len=unFilterWords.size();
-			for (int i = 0; i < unFilterWords.size(); i++) {
-				String key = unFilterWords.get(i).getName();
-				
-				//unFilterWords.get(i).getNatrue() ;
-				//去停用词				
-				if (stopWordList.contains(key)){					
-					unFilterWords.remove(unFilterWords.get(i));	
-				}else{
-					//统计词频
-					if (stems.containsKey(key)) {
-						count = stems.get(key) + 1;
-						stems.put(key, count);						
-					} else {
-						stems.put(key, 1.0);						
-					}
-				}
-			}
-			return true;			
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return false;
-		}
-		
-	}
-	
-	/**	
-	 * 根据词组-词频建立arff文件
-	 * @param contentWord：词组-词频
-	 * @return true for create succeed,false for create fail
+	 * create original instances with ID
+	 * @param 	Map contentWord:Key->contentID,value->Map<keyWords,TFIDF> stems
+	 * 			List wordVectors
+	 * 
 	 */
 	public void createArff(Map<Long,Map> contentWord,List<String> wordVectors){
 		
-		
-		attr=new FastVector();
-		//设置属性栏，读入每个属性对应的值
+		/** Set the attributes vector of instances*/
+		FastVector attr=new FastVector();	
 		Iterator<String> it=wordVectors.iterator();		
 		while(it.hasNext()){
 			String attributes=it.next().toString();
 			attr.addElement(new Attribute(attributes));
 		}
-		//wordVectors.clear();
 		
-		//读入数据,建立Instances实例
+		/** Read the values of each instance*/
 		double[][] values=new double[contentWord.size()][];
 		ins=new Instances("news-content",attr,0);
 		int i=0;
 		for(Entry<Long,Map> entry:contentWord.entrySet()){
-			//Long key=entry.getKey();
 			Map m=entry.getValue();	
 			values[i]=new double[wordVectors.size()]; 
 			Iterator<String> it_key=wordVectors.iterator();
@@ -205,7 +156,7 @@ public class ContentSegment {
 				}else{
 					values[i][j]=0;
 				}
-				//ins.add(m.get(attributes));
+				
 				j++;
 			}
 			ins.add(new DenseInstance(1.0, values[i]));
@@ -213,18 +164,15 @@ public class ContentSegment {
 		}
 	
 		
-		//加入Instance ID
+		/** Add instance ID for instances*/
 		ins.insertAttributeAt(new Attribute("auto_id"), 0);
 		Set<Long> key=contentWord.keySet();
 		int k=0;
 		for(Iterator<Long> it_id=key.iterator();it_id.hasNext();k++){
 			ins.instance(k).setValue(0,it_id.next());			
 		}
-		//ins.setClassIndex(ins.numAttributes()-1);
 		
-		//return ins;
-		
-		//保存arff文件
+		/** save the instances*/
 		ArffSaver save=new ArffSaver();
 		save.setInstances(ins);
 		try {
@@ -235,29 +183,8 @@ public class ContentSegment {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 			
-		}
-		
+		}	
 		
 	}
 
-//	public Map<Long,String> getContent(){
-//		return this.content;		
-//	}
-//	
-//	public void setContent(Map<Long,String> content){
-//		this.content=content;
-//	}
-//	
-//	public List<Term> getUnFilterWordList(){
-//		return unFilterWords;
-//	}	
-//	
-//	public Map<Long,Map> getWordFrequency(){
-//		return contentWord;
-//	}
-//	
-//	public List<String> getWordVectors(){
-//		return wordVectors;
-//	}
-//	
 }

@@ -109,7 +109,7 @@ public class KeyWordComputer {
             return 0;
         }
         String pos = term.getNatrue().natureStr;
-        if (!pos.startsWith("n") || "num".equals(pos)) {
+        if (!pos.startsWith("n")|| "num".equals(pos)) {
             return 0;
         }
         int weight = 0;
